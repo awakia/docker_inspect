@@ -204,3 +204,167 @@ Download time is about 5 seconds.
 ### Conclusion
 
 Fetch file from network solves "Sending build context" problem, but it cause another problem after downloading file.
+
+
+### Code Reading 1: Read around "Sending build context to Docker daemon"
+
+#### Find the place "Sending build context to Docker daemon"
+
+```
+var body io.Reader = progress.NewProgressReader(ctx, progressOutput, 0, "", "Sending build context to Docker daemon")
+
+```
+
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L179
+
+
+
+#### progress.NewProgressReader definition
+
+```
+func NewProgressReader(in io.ReadCloser, out Output, size int64, id, action string) *Reader {
+```
+
+https://github.com/docker/docker/blob/master/pkg/progress/progressreader.go#L19
+
+just output progress. important thing is just `ctx`
+
+#### important operation if build context is localfile
+
+If build context is from localfile, `tar` command is used.
+
+```
+ctx, err = archive.TarWithOptions(contextDir, &archive.TarOptions{
+	Compression:     archive.Uncompressed,
+	ExcludePatterns: excludes,
+	IncludeFiles:    includes,
+})
+
+```
+
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L159-L163
+
+So check time consuming to create tar like below:
+
+```
+$ time tar cf 1g.tar 1g.dummy
+tar cf 1g.tar 1g.dummy  0.05s user 1.70s system 44% cpu 3.905 total
+```
+
+about 4 seconds. First enough.
+
+#### Another place to change ctx
+
+```
+ctx = replaceDockerfileTarWrapper(ctx, relDockerfile, cli.trustedReference, &resolvedTags)
+```
+
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L173
+
+
+```
+func replaceDockerfileTarWrapper(inputTarStream io.ReadCloser, dockerfileName string, translator translatorFunc, resolvedTags *[]*resolvedTag) io.ReadCloser {
+	pipeReader, pipeWriter := io.Pipe()
+	go func() {
+		tarReader := tar.NewReader(inputTarStream)
+		tarWriter := tar.NewWriter(pipeWriter)
+
+		defer inputTarStream.Close()
+
+		for {
+			hdr, err := tarReader.Next()
+			if err == io.EOF {
+				// Signals end of archive.
+				tarWriter.Close()
+				pipeWriter.Close()
+				return
+			}
+			if err != nil {
+				pipeWriter.CloseWithError(err)
+				return
+			}
+
+			var content io.Reader = tarReader
+			if hdr.Name == dockerfileName {
+				// This entry is the Dockerfile. Since the tar archive was
+				// generated from a directory on the local filesystem, the
+				// Dockerfile will only appear once in the archive.
+				var newDockerfile []byte
+				newDockerfile, *resolvedTags, err = rewriteDockerfileFrom(content, translator)
+				if err != nil {
+					pipeWriter.CloseWithError(err)
+					return
+				}
+				hdr.Size = int64(len(newDockerfile))
+				content = bytes.NewBuffer(newDockerfile)
+			}
+
+			if err := tarWriter.WriteHeader(hdr); err != nil {
+				pipeWriter.CloseWithError(err)
+				return
+			}
+
+			if _, err := io.Copy(tarWriter, content); err != nil {
+				pipeWriter.CloseWithError(err)
+				return
+			}
+		}
+	}()
+
+	return pipeReader
+}
+```
+
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L361-L410
+
+These codes are suspicious for slowing down the speed. Need to check later.
+
+#### Sending context to docker deamon
+
+After creating `ctx`, `ctx` is passed to `body`:
+
+```
+var body io.Reader = progress.NewProgressReader(ctx, progressOutput, 0, "", "Sending build context to Docker daemon")
+```
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L179
+
+and then, passed to `options.Context`:
+
+```
+options := types.ImageBuildOptions{
+	Context:        body,
+```
+
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L212
+
+
+Then, `ImageBuild` is called
+
+```
+response, err := cli.client.ImageBuild(context.Background(), options)
+```
+
+https://github.com/docker/docker/blob/931e78df1b50e83837bff4966bb62458675e3c32/api/client/build.go#L235
+
+In `/docker/engine-api/client/image_build.go`
+
+```
+func (cli *Client) ImageBuild(ctx context.Context, options types.ImageBuildOptions) (types.ImageBuildResponse, error) {
+	...
+	serverResp, err := cli.postRaw(ctx, "/build", query, options.Context, headers)
+	...
+}
+```
+
+https://github.com/docker/docker/blob/95d827cda21c690fabf1d577ea0c489ac26c805a/vendor/src/github.com/docker/engine-api/client/image_build.go#L23-L48
+
+
+And then, in `/docker/engine-api/client/request.go`
+
+```
+func (cli *Client) postRaw(ctx context.Context, path string, query url.Values, body io.Reader, headers map[string][]string) (*serverResponse, error) {
+	return cli.sendClientRequest(ctx, "POST", path, query, body, headers)
+}
+```
+
+just send POST request to deamon.
