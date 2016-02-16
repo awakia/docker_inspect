@@ -9,9 +9,9 @@ mkfile 1m 1m.dummy
 mkfile 1g 1g.dummy
 ```
 
-## Experiment
+## Experiments
 
-### 1GB vs 1MB without .dockerignore
+### Experiment 1: 1GB vs 1MB without .dockerignore
 
 #### 1GB
 
@@ -65,7 +65,7 @@ Almost same!
 
 You should use .dockerignore to exclude context
 
-### Ignore 1GB vs 1MB with 1MB bulild
+### Experiment 2: Ignore 1GB vs 1MB with 1MB bulild
 
 Dockerfile:
 ```
@@ -114,9 +114,25 @@ Successfully built dcda95cda1b8
 docker build -t experiment .  12.80s user 2.19s system 45% cpu 33.031 total
 ```
 
-It takes 33 second even if it fails to build.
+It takes 33 seconds even if it fails to build.
 
 
 #### Conclusion
 
 Sending context itself is slow. We need to inspect why its so slow.
+
+### Experiment 3: Check normal copy speed
+
+#### If you copy 1GB file
+
+```
+$ time cp 1g.dummy 1g.dummy.copy
+cp -i 1g.dummy 1g.dummy.copy  0.00s user 1.07s system 46% cpu 2.304 total
+```
+
+It takes less than 3 seconds.
+33 seconds is way too slow.
+
+#### Conclusion
+
+Sending build context is doing more than normal copy.
