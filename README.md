@@ -65,6 +65,7 @@ Almost same!
 
 You should use .dockerignore to exclude context
 
+
 ### Experiment 2: Ignore 1GB vs 1MB
 
 #### Ignore 1GB
@@ -109,10 +110,10 @@ docker build -t experiment .  12.80s user 2.19s system 45% cpu 33.031 total
 
 It takes 33 seconds.
 
-
 #### Conclusion
 
 Sending context itself is slow. We need to inspect why its so slow.
+
 
 ### Experiment 3: Check normal copy speed
 
@@ -130,6 +131,7 @@ It takes less than 3 seconds.
 
 Sending build context is doing more than normal copy.
 
+
 ### Experiment 4: Use docker COPY instead of ADD
 
 Dockerfile:
@@ -139,7 +141,7 @@ COPY 1g.dummy /tmp
 ```
 
 ```
-time docker build -t experiment .
+$ time docker build -t experiment .
 Sending build context to Docker daemon 1.074 GB
 Step 1 : FROM gliderlabs/alpine:3.3
  ---> 06f3a228f35b
@@ -164,3 +166,41 @@ Though, ADD is better.
 #### Conclusion
 
 ADD is better than COPY. but this is not what I want to resolve. I do not dive into this problem any farther.
+
+
+### Experiment 5: ADD from url
+
+Sending context is slow, if so fetching file from network can be a solution
+
+Dockerfile:
+```
+FROM gliderlabs/alpine:3.3
+ADD http://localhost:8080/1g.dummy /tmp
+```
+
+After running static file server at localhost:8080, run experiment below
+
+```
+$ time docker build -t experiment .
+Sending build context to Docker daemon 750.6 kB
+Step 1 : FROM gliderlabs/alpine:3.3
+---> 06f3a228f35b
+Step 2 : ADD http://localhost:8080/1g.dummy /tmp
+Downloading [==================================================>] 1.074 GB/1.074 GB
+---> d00fc8bac44a
+Removing intermediate container 058e58ce0921
+Successfully built d00fc8bac44a
+docker build -t experiment .  0.46s user 0.17s system 1% cpu 41.694 total
+```
+
+Sending context is fast, but it takes so much time after downloading.
+Download time is about 5 seconds.
+
+```
+[negroni] Started GET /1g.dummy
+[negroni] Completed 200 OK in 5.12256144s
+```
+
+### Conclusion
+
+Fetch file from network solves "Sending build context" problem, but it cause another problem after downloading file.
