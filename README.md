@@ -65,14 +65,7 @@ Almost same!
 
 You should use .dockerignore to exclude context
 
-### Experiment 2: Ignore 1GB vs 1MB with 1MB bulild
-
-Dockerfile:
-```
-FROM gliderlabs/alpine:3.3
-# ADD 1g.dummy /tmp
-ADD 1m.dummy /tmp
-```
+### Experiment 2: Ignore 1GB vs 1MB
 
 #### Ignore 1GB
 
@@ -114,7 +107,7 @@ Successfully built dcda95cda1b8
 docker build -t experiment .  12.80s user 2.19s system 45% cpu 33.031 total
 ```
 
-It takes 33 seconds even if it fails to build.
+It takes 33 seconds.
 
 
 #### Conclusion
@@ -136,3 +129,38 @@ It takes less than 3 seconds.
 #### Conclusion
 
 Sending build context is doing more than normal copy.
+
+### Experiment 4: Use docker COPY instead of ADD
+
+Dockerfile:
+```
+FROM gliderlabs/alpine:3.3
+COPY 1g.dummy /tmp
+```
+
+```
+time docker build -t experiment .
+Sending build context to Docker daemon 1.074 GB
+Step 1 : FROM gliderlabs/alpine:3.3
+ ---> 06f3a228f35b
+Step 2 : COPY 1g.dummy /tmp
+ ---> bb2e26df224a
+Removing intermediate container cb2e4edf9242
+Successfully built bb2e26df224a
+docker build -t experiment .  12.31s user 2.34s system 34% cpu 42.183 total
+```
+
+Docker COPY is slower than ADD
+
+references:
+- https://github.com/docker/docker/blob/master/docs/reference/builder.md#add
+- https://github.com/docker/docker/blob/680cf1c8f4164d7b3e95759a7cc93ce5843e5543/builder/dockerfile/dispatchers.go#L150-L151
+
+> Add the file 'foo' to '/path'. Tarball and Remote URL (git, http) handling
+> exist here. If you do not wish to have this automatic handling, use COPY.
+
+Though, ADD is better.
+
+#### Conclusion
+
+ADD is better than COPY. but this is not what I want to resolve. I do not dive into this problem any farther.
